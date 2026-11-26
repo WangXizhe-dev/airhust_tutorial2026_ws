@@ -1,47 +1,36 @@
-// 标了 TODO 的地方需要你补全/修改
-#include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <ros/ros.h>
 #include <std_msgs/Float32.h>
-
-double distance = 2.0;
-
-void obstacle_cb(const std_msgs::Float32::ConstPtr& msg) {
-  distance = msg->data;
-}
 
 int main(int argc, char** argv) {
   ros::init(argc, argv, "flight_node");
   ros::NodeHandle nh;
 
-  // TODO: 飞控连接有500ms的心跳包，那这里至少要填多少呢？应该可以填大一些
-  ros::Rate rate(1.0);
+  constexpr double kTakeoffHeight = 1.5;   // metres
+  constexpr double kLandingDistance = 0.5; // metres
+  ros::Rate rate(20.0);
 
-  ros::Publisher g_setpoint_pub = nh.advertise<geometry_msgs::PoseStamped>("/drone/setpoint", 10);
-
-  ros::Subscriber obstacle_sub = nh.subscribe(
-      "/drone", 10, obstacle_cb);   // TODO：我也要sub吗···
-
-  geometry_msgs::PoseStamped setpoint,fakepoint;
+  auto setpoint_pub = nh.advertise<geometry_msgs::PoseStamped>("/drone/setpoint", 10);
+  geometry_msgs::PoseStamped setpoint;
   setpoint.header.frame_id = "map";
-  setpoint.pose.position.x = 0.0;
-  setpoint.pose.position.y = 0.0;
-  setpoint.pose.position.z = 0.0;  // TODO: **我让你飞起来
+  setpoint.pose.orientation.w = 1.0;
+  setpoint.pose.position.z = kTakeoffHeight;
 
-
+  auto obstacle_sub = nh.subscribe<std_msgs::Float32>(
+      "/drone/sensor/obstacle_distance", 10,
+      [&](const std_msgs::Float32::ConstPtr& msg) {
+        if (msg->data < kLandingDistance && setpoint.pose.position.z > 0.0) {
+          setpoint.pose.position.z = 0.0;
+          ROS_INFO("Landing at obstacle distance %.3f m", msg->data);
+        }
+      });
 
   ROS_INFO("flight_node ready");
   while (ros::ok()) {
-
-    if (distance < 0.0) {  // TODO：停不下来了啊
-      setpoint.pose.position.z = 0;
-    }
-
-    setpoint.header.stamp = ros::Time();  // TODO: stamp需要填什么呢？
-    g_setpoint_pub.publish(fakepoint);  // TODO：到底在发些什么啊
     ros::spinOnce();
+    setpoint.header.stamp = ros::Time::now();
+    setpoint_pub.publish(setpoint);
     rate.sleep();
   }
-
-  ROS_INFO("flight_node stopped");
   return 0;
 }
