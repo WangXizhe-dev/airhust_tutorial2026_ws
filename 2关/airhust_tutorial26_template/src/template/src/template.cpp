@@ -47,8 +47,18 @@ int main(int argc, char **argv)
 
   // 参数读取
 
-  nh.param<float>("err_max", err_max, 0);
+  nh.param<float>("err_max", err_max, 0.15f);
   nh.param<float>("if_debug", if_debug, 0);
+  double circle_radius;
+  int circle_points;
+  nh.param("circle_radius", circle_radius, 1.0);
+  nh.param("circle_points", circle_points, 12);
+  if (!std::isfinite(circle_radius) || !std::isfinite(err_max) || err_max <= 0 ||
+      circle_radius <= 0 || circle_points < 3 ||
+      circle_radius * std::sin(M_PI / circle_points) <= std::sqrt(2.0) * err_max) {
+    ROS_ERROR("Invalid circle geometry or overlapping waypoint tolerances");
+    return 1;
+  }
   print_param();
 
   
@@ -59,139 +69,75 @@ int main(int argc, char **argv)
   ros::spinOnce();
   rate.sleep();
   
-  // 等待连接到飞控
-  while (ros::ok() && !current_state.connected)
-  {
+  // Capture the origin from the first usable odometry message before issuing targets.
+  while (ros::ok() && (!current_state.connected || !flag_init_position)) {
     ros::spinOnce();
     rate.sleep();
   }
-  // 定义客户端变量，设置为offboard模式
-  mavros_msgs::SetMode offb_set_mode;
-  offb_set_mode.request.custom_mode = "OFFBOARD";
 
-  // 定义客户端变量，请求无人机解锁
-  mavros_msgs::CommandBool arm_cmd;
-  arm_cmd.request.value = true;
-
-  // 记录当前时间，并赋值给变量last_request
+  enum class Phase { Takeoff, Circle, Hover, Land };
+  Phase phase = Phase::Takeoff;
+  int waypoint = 0;
   ros::Time last_request = ros::Time::now();
+  ros::Time hover_start;
+  mavros_msgs::SetMode mode;
+  mavros_msgs::CommandBool arm;
+  arm.request.value = true;
 
-  while (ros::ok())
-  {
-    if (current_state.mode != "OFFBOARD" && (ros::Time::now() - last_request > ros::Duration(3.0)))
-    {
-      if(if_debug == 1)
-      {
-        if (set_mode_client.call(offb_set_mode) && offb_set_mode.response.mode_sent)
-        {
-          ROS_INFO("Offboard enabled");
-        }
-      }
-      else
-      {
-        ROS_INFO("Waiting for OFFBOARD mode");
-      }
-      last_request = ros::Time::now();
-    }
-    else
-    {
-      if (!current_state.armed && (ros::Time::now() - last_request > ros::Duration(3.0)))
-      {
-        if (arming_client.call(arm_cmd) && arm_cmd.response.success)
-        {
-          ROS_INFO("Vehicle armed");
-        }
-        last_request = ros::Time::now();
-      }
-    }
-    // 当无人机到达起飞点高度后，悬停3秒后进入任务模式，提高视觉效果
-    if (fabs(local_pos.pose.pose.position.z - ALTITUDE) < 0.2)
-    {
-      if (ros::Time::now() - last_request > ros::Duration(1.0))
-      {
-        mission_num = 1;
- 	      last_request = ros::Time::now();
-        break;
-      }
-    }
-
-    mission_pos_cruise(0, 0, ALTITUDE, 0, err_max); 
-    mavros_setpoint_pos_pub.publish(setpoint_raw);
+  while (ros::ok()) {
     ros::spinOnce();
-    rate.sleep();
-  }
-  
-
-  while (ros::ok())
-  {
-    ROS_WARN("mission_num = %d", mission_num);
-    
-    switch (mission_num)
-    {
-      // mission1: 起飞
-      case 1:
-        if (mission_pos_cruise(0, 0, ALTITUDE, 0, err_max))
-        {
-          if(lib_time_record_func(1.0, ros::Time::now()))
-          {
-            mission_num = 2;
-            last_request = ros::Time::now();
-          } 
+    const auto now = ros::Time::now();
+    if (phase == Phase::Land) {
+      if (!current_state.armed && std::abs(local_pos.pose.pose.position.z - init_position_z_take_off) < 0.25) {
+        ROS_INFO("LANDED disarmed, relative height %.3f m", local_pos.pose.pose.position.z - init_position_z_take_off);
+        return 0;
+      }
+      if (current_state.mode != "AUTO.LAND" && (now - last_request).toSec() > 1.0) {
+        mode.request.custom_mode = "AUTO.LAND";
+        set_mode_client.call(mode);
+        last_request = now;
+      }
+    } else if (phase == Phase::Takeoff) {
+      const bool arrived = mission_pos_cruise(0, 0, ALTITUDE, 0, err_max);
+      if (current_state.mode == "OFFBOARD" && current_state.armed && arrived) {
+        phase = Phase::Circle;
+        ROS_INFO("TAKEOFF complete, entering circle");
+      } else if ((now - last_request).toSec() > 3.0) {
+        if (current_state.mode != "OFFBOARD") {
+          if (if_debug == 1) {
+            mode.request.custom_mode = "OFFBOARD";
+            set_mode_client.call(mode);
+          }
+        } else if (!current_state.armed) {
+          arming_client.call(arm);
         }
-	    else if(ros::Time::now() - last_request >= ros::Duration(3.0))
-        {
-          mission_num = 2;
-          last_request = ros::Time::now();
-          lib_time_init_flag = true;
+        last_request = now;
+      }
+    } else if (phase == Phase::Circle) {
+      const double angle = 2.0 * M_PI * waypoint / circle_points;
+      if (mission_pos_cruise(circle_radius * std::cos(angle), circle_radius * std::sin(angle),
+                             ALTITUDE, 0, err_max)) {
+        const auto& p = local_pos.pose.pose.position;
+        ROS_INFO("CIRCLE %d/%d actual %.3f %.3f %.3f", waypoint, circle_points,
+                 p.x - init_position_x_take_off, p.y - init_position_y_take_off,
+                 p.z - init_position_z_take_off);
+        if (waypoint == circle_points) {
+          phase = Phase::Hover;
+          hover_start = now;
+        } else {
+          ++waypoint;
         }
-        break;
-
-      //世界系前进
-      case 2:
-        if (mission_pos_cruise(4.0, 0.0, ALTITUDE, 1.57, err_max))
-        {
-          mission_num = 3;
-          last_request = ros::Time::now();
-        }
-        break;
-    
-      //机体系右移
-      case 3:
-        if(current_position_cruise(0.0, -4.0, ALTITUDE, -1.57, err_max))
-        {
-          mission_num = 4;
-          last_request = ros::Time::now();
-        }
-        break;
-
-      //悬停
-      case 4:
-        if(hover(3.0))
-        {
-          mission_num = 5;
-          last_request = ros::Time::now();
-        }
-        break;
-
-      //降落
-        case 5:
-        if(precision_land())
-        {
-          mission_num = -1; // 任务结束
-          last_request = ros::Time::now();
-        }
-        break;
+      }
+    } else {
+      mission_pos_cruise(circle_radius, 0, ALTITUDE, 0, err_max);
+      if ((now - hover_start).toSec() >= 3.0) {
+        phase = Phase::Land;
+        ROS_INFO("HOVER complete, requesting AUTO.LAND");
+      }
     }
+    setpoint_raw.header.stamp = now;
     mavros_setpoint_pos_pub.publish(setpoint_raw);
-    ros::spinOnce();
     rate.sleep();
-    
-    if(mission_num == -1) 
-    {
-      exit(0);
-    }
   }
   return 0;
 }
-
-

@@ -37,7 +37,9 @@ void local_pos_cb(const nav_msgs::Odometry::ConstPtr &msg)
 	local_pos = *msg;
 	tf::quaternionMsgToTF(local_pos.pose.pose.orientation, quat);
 	tf::Matrix3x3(quat).getRPY(roll, pitch, yaw);
-	if (flag_init_position == false && (local_pos.pose.pose.position.z != 0))
+	if (!flag_init_position && !msg->header.stamp.isZero() && std::isfinite(yaw) &&
+        std::isfinite(msg->pose.pose.position.x) && std::isfinite(msg->pose.pose.position.y) &&
+        std::isfinite(msg->pose.pose.position.z))
 	{
 		init_position_x_take_off = local_pos.pose.pose.position.x;
 		init_position_y_take_off = local_pos.pose.pose.position.y;

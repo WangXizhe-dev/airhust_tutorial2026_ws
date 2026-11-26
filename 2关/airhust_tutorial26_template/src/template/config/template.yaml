@@ -1,2 +1,4 @@
 err_max: 0.15
 if_debug: 1
+circle_radius: 1.0  # metres
+circle_points: 12
