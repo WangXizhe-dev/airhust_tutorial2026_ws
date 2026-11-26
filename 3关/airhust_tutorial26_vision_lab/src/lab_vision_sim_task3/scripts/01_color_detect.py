@@ -52,12 +52,9 @@ def color_mask(image, lower, upper):
     """
     mask = cv2.inRange(image, np.array(lower), np.array(upper))
 
-    """ ————————————————————————————填空—————————————————————————————————
-
-
-
-
-        ————————————————————————————填空————————————————————————————————— """
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     return mask
 
 
@@ -69,11 +66,11 @@ def find_blobs(mask, min_area=MIN_AREA):
     """
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     blobs = []
-    """ ————————————————————————————填空—————————————————————————————————
-    
-
-    
-        ————————————————————————————填空————————————————————————————————— """
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area >= min_area:
+            (x, y), radius = cv2.minEnclosingCircle(contour)
+            blobs.append((round(x), round(y), round(radius), area))
     return blobs
 
 
@@ -95,11 +92,9 @@ results = []
 
 for name, (lower, upper) in COLOR_RANGES.items():
     mask = color_mask(image, lower, upper)
-    """ ————————————————————————————填空—————————————————————————————————
-    
-
-    
-        ————————————————————————————填空————————————————————————————————— """
+    for x, y, radius, area in find_blobs(mask):
+        results.append({"color": name, "center": (x, y), "radius": radius, "area": area})
+        print("%s (%d, %d) radius=%d area=%.0f" % (name, x, y, radius, area))
     
 
 print("共检测到 %d 个色块" % len(results))

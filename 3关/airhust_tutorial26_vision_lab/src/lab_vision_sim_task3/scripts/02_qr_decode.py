@@ -50,13 +50,15 @@ def decode_qr(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     results = []
 
-    """ ————————————————————————————填空—————————————————————————————————
-
-
-
-
-
-        ————————————————————————————填空————————————————————————————————— """
+    ok, texts, corners, _ = detector.detectAndDecodeMulti(gray)
+    if ok:
+        for text, points in zip(texts, corners):
+            if text:
+                results.append({"text": text, "points": points.reshape(4, 2)})
+    if not results:
+        text, points, _ = detector.detectAndDecode(gray)
+        if text and points is not None:
+            results.append({"text": text, "points": points.reshape(4, 2)})
    
     return results
 

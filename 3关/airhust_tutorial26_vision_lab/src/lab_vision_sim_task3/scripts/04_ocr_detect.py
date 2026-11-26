@@ -67,12 +67,7 @@ def read_text(image):
     --psm 6 表示整张图当成一块文本，适合这种几行字的图。
     """
     config = "--psm %d" % PSM
-    text = ""
-    """ ————————————————————————————填空—————————————————————————————————
-
-                这里只要填一行，cv简单吧孩子，和我一起，成为调包侠吧
-
-        ————————————————————————————填空————————————————————————————————— """
+    text = pytesseract.image_to_string(image, lang=LANG, config=config)
     return text
 
 

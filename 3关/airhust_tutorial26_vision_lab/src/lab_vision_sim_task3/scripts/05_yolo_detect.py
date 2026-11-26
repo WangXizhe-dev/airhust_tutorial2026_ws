@@ -64,13 +64,16 @@ def detect_objects(model, image, conf=CONF, iou=IOU):
     """
 
     detections = []
-    """————————————————————————————填空—————————————————————————————————
-    
-
-
-
-    
-       ————————————————————————————填空———————————————————————————————— """
+    result = model.predict(image, conf=conf, iou=iou, verbose=False)[0]
+    for box in result.boxes:
+        cls_id = int(box.cls.item())
+        detections.append({
+            "cls_id": cls_id,
+            "cls_name": result.names[cls_id],
+            "conf": float(box.conf.item()),
+            "xyxy": tuple(box.xyxy[0].tolist()),
+            "center": tuple(box.xywhn[0, :2].tolist()),
+        })
 
     return detections
 
