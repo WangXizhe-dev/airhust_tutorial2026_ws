@@ -69,7 +69,7 @@ int main(int argc, char **argv)
   ros::spinOnce();
   rate.sleep();
   
-  // Capture the origin from the first usable odometry message before issuing targets.
+  // 在发布目标之前，从第一个可用的里程计信息中获取起始位置。
   while (ros::ok() && (!current_state.connected || !flag_init_position)) {
     ros::spinOnce();
     rate.sleep();
